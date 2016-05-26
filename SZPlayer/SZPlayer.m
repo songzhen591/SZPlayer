@@ -26,7 +26,7 @@ static const CGFloat bottomViewH = 45;
 
 
 //播放核心组件
-
+@property (strong, nonatomic) AVPlayer *player;
 @property (strong, nonatomic) AVPlayerItem *playerItem;
 @property (strong, nonatomic) AVPlayerLayer *playerLayer;
 
@@ -55,6 +55,8 @@ static const CGFloat bottomViewH = 45;
 
 @property (assign, nonatomic) BOOL isFullScreenPlay;                //是否是全屏显示
 
+@property (strong, nonatomic) id playbackObj;
+
 @end
 
 @implementation SZPlayer
@@ -62,16 +64,15 @@ static const CGFloat bottomViewH = 45;
 NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
 
 
-- (instancetype)initWithFrame:(CGRect)frame videoURL:(NSString *)videoURL
+- (instancetype)initWithFrame:(CGRect)frame
 {
     if (self = [super initWithFrame:frame]) {
         
-        _videoURL = videoURL;
+        NSLog(@"%@", NSStringFromCGRect(frame));
         _frame = frame;
         _isPlayed = YES;
-        self.backgroundColor = [UIColor blackColor];
         
-        [self.layer addSublayer:self.playerLayer];
+        self.backgroundColor = [UIColor blackColor];
         
         [self addSubview:self.topView];
         
@@ -88,34 +89,338 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     return self;
 }
 
-/**
- *  播放器的横向全屏
- */
-- (instancetype)initFullSvreenPlayerVideoURL:(NSString *)videoURL
+- (void)setVideoName:(NSString *)videoName
 {
-    if (self = [super init]) {
+    _videoName = videoName;
+    self.titleLabel.text = videoName;
+}
+
+#pragma mark - 设置videoURL
+- (void)setVideoURL:(NSString *)videoURL
+{
+    _videoURL = videoURL;
+    
+    if (self.playerItem) {
+        //移除通知
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:AVPlayerItemDidPlayToEndTimeNotification object:nil];
+        //移除监听
+        [self removeObserverFromCurrentPlayerItem];
+    }
+    
+    //更新数据
+    AVURLAsset *asset = [AVURLAsset assetWithURL:[NSURL URLWithString:self.videoURL]];
+    self.playerItem = [AVPlayerItem playerItemWithAsset:asset];
+    //监听playerItem
+    [self addObserverToCurrentPlayerItem];
+    //如果self.player存在则替换item
+    [self.player replaceCurrentItemWithPlayerItem:self.playerItem];
+    //不存在则创建
+    if (!self.player) {
+        self.player = [AVPlayer playerWithPlayerItem:self.playerItem];
+        self.playerLayer = [AVPlayerLayer playerLayerWithPlayer:self.player];
+        self.playerLayer.videoGravity = AVLayerVideoGravityResizeAspect;
+        self.playerLayer.frame = self.layer.bounds;
+        [self.layer insertSublayer:self.playerLayer atIndex:0];
+    }
+    // 添加视频播放结束通知
+    [[NSNotificationCenter defaultCenter]addObserver:self selector:@selector(videolayDidEnd:) name:AVPlayerItemDidPlayToEndTimeNotification object:nil];
+}
+
+#pragma mark - 监听self.playerItem
+- (void)addObserverToCurrentPlayerItem
+{
+    //监听视频准备情况
+    [_playerItem addObserver:self forKeyPath:@"status" options:NSKeyValueObservingOptionNew context:nil];
+    //缓冲进度
+    [_playerItem addObserver:self forKeyPath:@"loadedTimeRanges" options:NSKeyValueObservingOptionNew context:nil];
+    //seekToTime后，缓冲数据为空，而且有效时间内数据无法补充，播放失败
+    [_playerItem addObserver:self forKeyPath:@"playbackBufferEmpty" options:NSKeyValueObservingOptionNew context:nil];
+    [_playerItem addObserver:self forKeyPath:@"playbackLikelyToKeepUp" options:NSKeyValueObservingOptionNew context:nil];
+}
+
+#pragma mark - APlayerItem属性变化回调
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSString *,id> *)change context:(void *)context
+{
+    if ([keyPath isEqualToString:@"status"]) {
+        if (self.playerItem.status == AVPlayerItemStatusReadyToPlay) {
+            NSLog(@"准备播放");
+            //获取总时长
+            CMTime duration = self.playerItem.duration;
+            _videoDuration = CMTimeGetSeconds(duration);
+            //更新UI
+            [self updateVideoDuration];
+            
+            //设置slider最大值
+            self.videoSlider.maximumValue = _videoDuration;
+
+            //监听播放进度
+            [self monitorVideoPlaying];
+            
+            [self.player play];
+        }
+    }else if ([keyPath isEqualToString:@"loadedTimeRanges"]){
+        if (self.playerItem.status == AVPlayerItemStatusReadyToPlay) {
+            
+            //更显缓冲区
+            self.videoProgressView.progress = [self videoBufferDuration] / _videoDuration;
+        }
+    }
+    else if ([keyPath isEqualToString:@"playbackBufferEmpty"]){
+        NSLog(@"卡主啦");
+        //视频卡主
+    }else if ([keyPath isEqualToString:@"playbackLikelyToKeepUp"]){
+        NSLog(@"走起");
+    }
+}
+
+#pragma mark - 监听播放进度
+- (void)monitorVideoPlaying
+{
+    __weak typeof(self) weakSelf = self;
+    Float64 interval = 0.5 *  _videoDuration / self.videoSlider.bounds.size.width;
+    self.playbackObj =  [weakSelf.player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(interval, NSEC_PER_SEC) queue:NULL usingBlock:^(CMTime time) {
         
-        _videoURL = videoURL;
-        _isPlayed = YES;
-        self.backgroundColor = [UIColor blackColor];
+        if ([weakSelf.delegate respondsToSelector:@selector(videoDidPlayingOnTime:)]) {
+            [weakSelf.delegate videoDidPlayingOnTime:CMTimeGetSeconds(weakSelf.playerItem.currentTime)];
+        }
         
-        [self.layer addSublayer:self.playerLayer];
+        if (!weakSelf.isTouchDownVideoSlider) {
+            _currentTime = CMTimeGetSeconds(weakSelf.playerItem.currentTime);
+            [weakSelf updateVideoTime];
+            [weakSelf updateBottomSlider];
+        }
+    }];
+}
+
+- (NSTimeInterval)videoBufferDuration {
+    NSArray *loadedTimeRanges = [[_player currentItem] loadedTimeRanges];
+    CMTimeRange timeRange = [loadedTimeRanges.firstObject CMTimeRangeValue];// 获取缓冲区域
+    float startSeconds = CMTimeGetSeconds(timeRange.start);
+    float durationSeconds = CMTimeGetSeconds(timeRange.duration);
+    NSTimeInterval result = startSeconds + durationSeconds;// 计算缓冲总进度
+    return result;
+}
+
+#pragma mark - update
+- (void)updateVideoDuration
+{
+    self.videoDurationLabel.text = [self convertTime:_videoDuration];
+}
+- (void)updateVideoTime
+{
+    self.videoTimeLabel.text = [self convertTime:_currentTime];
+}
+- (void)updateBottomSlider
+{
+    [self.videoSlider setValue:_currentTime animated:YES];
+}
+
+#pragma mark ************************event***********************
+- (void)back
+{
+    if (self.delegate && [self.delegate respondsToSelector:@selector(tapVideoBack)]) {
+        [self.delegate tapVideoBack];
+    }
+}
+
+#pragma mark 播放或暂停
+- (void)playOrPause
+{
+    [self viewDismissAfterSeconds];
+    self.playOrPauseButton.selected = !self.playOrPauseButton.isSelected;
+    if (_isPlayed) {
+        [self.player pause];
+    }else{
+        [self.player play];
+    }
+    _isPlayed = !_isPlayed;
+}
+- (void)play
+{
+    [self.player play];
+    _isPlayed = YES;
+    self.playOrPauseButton.selected = YES;
+}
+- (void)pause
+{
+    [self.player pause];
+    _isPlayed = NO;
+    self.playOrPauseButton.selected = NO;
+}
+
+#pragma mark 拖动底部滑块
+- (void)videoSliderBeginDragging
+{
+    _isTouchDownVideoSlider = YES;
+    [self viewDismissAfterSeconds];
+}
+- (void)videoSliderDragging
+{
+    [self viewDismissAfterSeconds];
+    _isTouchDownVideoSlider = YES;
+    //更改当前时间
+    _currentTime = _videoSlider.value;
+    [self updateVideoTime];
+}
+- (void)videoSliderEndDragging
+{
+    
+    [self viewDismissAfterSeconds];
+    [self.player seekToTime:CMTimeMakeWithSeconds(_currentTime, NSEC_PER_SEC) toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero completionHandler:^(BOOL finished) {
+        _isTouchDownVideoSlider = NO;
+    }];
+}
+
+#pragma mark - 轻击屏幕
+- (void)tapScreen
+{
+    [self viewDismissAfterSeconds];
+    _hideAroundingViews = !_hideAroundingViews;
+    if (_hideAroundingViews) {
+        [self hideViews];
+    }else{
+        [self showViews];
+    }
+}
+#pragma mark - 点击全屏
+- (void)fullScreenClick:(UIButton *)sender
+{
+    [self viewDismissAfterSeconds];
+    
+    if (!_isFullScreenPlay) {
+        [UIView animateWithDuration:0.2 animations:^{
+            self.transform = CGAffineTransformIdentity;
+            self.transform = CGAffineTransformMakeRotation(M_PI / 2);
+            self.frame = CGRectMake(0, 0, SZScreenW, SZScreenH);
+            self.playerLayer.frame = CGRectMake(0,0, SZScreenH,SZScreenW);
+            [self setupSubViewFrames];
+            [[UIApplication sharedApplication].keyWindow addSubview:self];
+            self.isFullScreenPlay = YES;
+            self.fullScreenButton.selected = YES;
+        }];
         
-        [self addSubview:self.topView];
-        
-        [self addSubview:self.bottomView];
-        
-        [[NSNotificationCenter defaultCenter]addObserver:self selector:@selector(videolayDidEnd:) name:AVPlayerItemDidPlayToEndTimeNotification object:_playerItem];
-        
-        //添加轻击手势
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tapScreen)];
-        [self addGestureRecognizer:tap];
-        
-//        [self fullScreenClick];
+    }else{
+        [UIView animateWithDuration:0.2 animations:^{
+            self.transform = CGAffineTransformIdentity;
+            self.frame = _frame;
+            NSLog(@"%@", NSStringFromCGRect(self.frame));
+            self.playerLayer.frame =  self.bounds;
+            self.isFullScreenPlay = NO;
+            [self setupSubViewFrames];
+            self.fullScreenButton.selected = NO;
+        }];
         
     }
-    return self;
+    
+    //发送全屏通知
+    [[NSNotificationCenter defaultCenter] postNotificationName:SZFullScreenBtnNotification object:sender];
 }
+
+
+#pragma mark ***********************notification***********************
+- (void)videolayDidEnd:(NSNotification *)notification
+{
+    __weak typeof(self) weakSelf = self;
+    [self.player seekToTime:kCMTimeZero completionHandler:^(BOOL finished) {
+        [weakSelf.videoSlider setValue:0.0 animated:YES];
+        weakSelf.playOrPauseButton.selected = NO;
+        weakSelf.isPlayed = NO;
+    }];
+}
+
+#pragma mark - 更新frame
+- (void)setupSubViewFrames
+{
+    //以self.playerLayer为基准
+    self.topView.frame = CGRectMake(0, 0, self.playerLayer.frame.size.width, topViewH);
+    self.bottomView.frame = CGRectMake(0, self.playerLayer.frame.size.height - bottomViewH, self.playerLayer.frame.size.width, bottomViewH);
+    self.fullScreenButton.frame = CGRectMake(self.playerLayer.frame.size.width - bottomViewH, 0, bottomViewH, bottomViewH);
+    self.videoDurationLabel.frame = CGRectMake(self.playerLayer.frame.size.width - self.fullScreenButton.bounds.size.width - self.videoTimeLabel.bounds.size.width, 0, self.videoTimeLabel.bounds.size.width, bottomViewH);
+    CGFloat progressViewY = (bottomViewH - 2 )* 0.5;
+    CGFloat progressViewW = self.playerLayer.bounds.size.width - CGRectGetMaxX(_videoTimeLabel.frame) - self.videoDurationLabel.frame.size.width - self.fullScreenButton.frame.size.width;
+    _videoProgressView.frame = CGRectMake(CGRectGetMaxX(_videoTimeLabel.frame), progressViewY, progressViewW, bottomViewH);
+    self.videoSlider.frame = CGRectMake(self.videoProgressView.frame.origin.x, 0, self.videoProgressView.bounds.size.width, bottomViewH);
+}
+
+#pragma mark - 计时隐藏
+//做任何操作之前调用此方法，重新计时，3秒后隐藏视图
+- (void)viewDismissAfterSeconds
+{
+    [UIView cancelPreviousPerformRequestsWithTarget:self selector:@selector(hideViews) object:nil];
+    [self performSelector:@selector(hideViews) withObject:nil afterDelay:3];
+}
+
+- (void)hideViews
+{
+    [UIView animateWithDuration:0.2 animations:^{
+        self.topView.alpha = 0;
+        self.bottomView.alpha = 0;
+        self.hideAroundingViews = YES;
+    }];
+}
+- (void)showViews
+{
+    [UIView animateWithDuration:0.2 animations:^{
+        self.topView.alpha = 1;
+        self.bottomView.alpha = 1;
+        self.hideAroundingViews = NO;
+    }];
+}
+
+#pragma mark - converTime
+- (NSString *)convertTime:(CGFloat)second{
+    NSDate *d = [NSDate dateWithTimeIntervalSince1970:second];
+    if (second/3600 >= 1) {
+        [self.dateFormatter setDateFormat:@"HH:mm:ss"];
+    } else {
+        [self.dateFormatter setDateFormat:@"mm:ss"];
+    }
+    NSString *showtimeNew = [self.dateFormatter stringFromDate:d];
+    return showtimeNew;
+}
+
+- (NSDateFormatter *)dateFormatter {
+    if (!_dateFormatter) {
+        _dateFormatter = [[NSDateFormatter alloc] init];
+    }
+    return _dateFormatter;
+}
+
+
+- (void)removeObserverFromCurrentPlayerItem
+{
+    [self.playerItem removeObserver:self forKeyPath:@"status"];
+    [self.playerItem removeObserver:self forKeyPath:@"loadedTimeRanges"];
+    [self.playerItem removeObserver:self forKeyPath:@"playbackBufferEmpty"];
+    [self.playerItem removeObserver:self forKeyPath:@"playbackLikelyToKeepUp"];
+}
+
+#pragma mark - 释放
+- (void)releaseSZPlayer
+{
+    [self removeObserverFromCurrentPlayerItem];
+    
+    //移除此监听一定要提前，防止防止页面已经注销，但仍然对视频进行监控
+    [self.player removeTimeObserver:self.playbackObj];
+    
+    [self.player.currentItem cancelPendingSeeks];
+    [self.player.currentItem.asset cancelLoading];
+    [self.player pause];
+    [self removeFromSuperview];
+    [self.playerLayer removeFromSuperlayer];
+    [self.player replaceCurrentItemWithPlayerItem:nil];
+    self.player = nil;
+    self.playerItem = nil;
+    self.playerLayer = nil;
+    
+}
+
+-(void)dealloc
+{
+    [self releaseSZPlayer];
+}
+
+
 
 #pragma mark ----------------topView
 - (UIImageView *)topView
@@ -270,339 +575,5 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     [_fullScreenButton addTarget:self action:@selector(fullScreenClick:) forControlEvents:UIControlEventTouchUpInside];
     return _fullScreenButton;
 }
-
-
-#pragma mark --------核心组件
-- (AVPlayerLayer *)playerLayer
-{
-    if (_playerLayer) {
-        return _playerLayer;
-    }
-    AVAudioSession *audioSesstion = [AVAudioSession sharedInstance];
-    [audioSesstion setActive:YES error:NULL];
-    [audioSesstion setCategory:AVAudioSessionCategoryPlayback error:nil];
-    
-    AVURLAsset *asset = [AVURLAsset assetWithURL:[NSURL URLWithString:self.videoURL]];
-    _playerItem = [AVPlayerItem playerItemWithAsset:asset];
-    [self addObserver];
-    _player = [[AVPlayer alloc] initWithPlayerItem:_playerItem];
-    _playerLayer = [AVPlayerLayer playerLayerWithPlayer:_player];
-    _playerLayer.videoGravity = AVLayerVideoGravityResizeAspect;
-    _playerLayer.frame = self.layer.bounds;
-    [_player play];
-    return _playerLayer;
-}
-
-#pragma mark - 监听self.playerItem
-- (void)addObserver
-{
-    //监听视频准备情况
-    [_playerItem addObserver:self forKeyPath:@"status" options:NSKeyValueObservingOptionNew context:nil];
-    //缓冲进度
-    [_playerItem addObserver:self forKeyPath:@"loadedTimeRanges" options:NSKeyValueObservingOptionNew context:nil];
-    //seekToTime后，缓冲数据为空，而且有效时间内数据无法补充，播放失败
-    [_playerItem addObserver:self forKeyPath:@"playbackBufferEmpty" options:NSKeyValueObservingOptionNew context:nil];
-    [_playerItem addObserver:self forKeyPath:@"playbackLikelyToKeepUp" options:NSKeyValueObservingOptionNew context:nil];
-}
-
-#pragma mark - APlayerItem属性变化回调
-- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary<NSString *,id> *)change context:(void *)context
-{
-    if ([keyPath isEqualToString:@"status"]) {
-        if (self.playerItem.status == AVPlayerItemStatusReadyToPlay) {
-            NSLog(@"准备播放");
-            //获取总时长
-            CMTime duration = self.playerItem.duration;
-            _videoDuration = CMTimeGetSeconds(duration);
-            //更新UI
-            [self updateVideoDuration];
-            
-            //设置slider最大值
-            self.videoSlider.maximumValue = _videoDuration;
-
-            //监听播放进度
-            [self monitorVideoPlaying];
-        }
-    }else if ([keyPath isEqualToString:@"loadedTimeRanges"]){
-        if (self.playerItem.status == AVPlayerItemStatusReadyToPlay) {
-            
-            //更显缓冲区
-            self.videoProgressView.progress = [self videoBufferDuration] / _videoDuration;
-        }
-    }
-    else if ([keyPath isEqualToString:@"playbackBufferEmpty"]){
-        NSLog(@"卡主啦");
-        //视频卡主
-    }else if ([keyPath isEqualToString:@"playbackLikelyToKeepUp"]){
-        NSLog(@"走起");
-    }
-}
-
-#pragma mark - 监听播放进度
-- (void)monitorVideoPlaying
-{
-    __weak typeof(self) weakSelf = self;
-    Float64 interval = 0.5 *  _videoDuration / self.videoSlider.bounds.size.width;
-    [self.player addPeriodicTimeObserverForInterval:CMTimeMakeWithSeconds(interval, NSEC_PER_SEC) queue:NULL usingBlock:^(CMTime time) {
-        
-        if (weakSelf.delegate && [weakSelf.delegate respondsToSelector:@selector(videoDidPlayingOnTime:)]) {
-            [weakSelf.delegate videoDidPlayingOnTime:CMTimeGetSeconds(weakSelf.playerItem.currentTime)];
-        }
-        
-        if (!weakSelf.isTouchDownVideoSlider) {
-            _currentTime = CMTimeGetSeconds(weakSelf.playerItem.currentTime);
-            [weakSelf updateVideoTime];
-            [weakSelf updateBottomSlider];
-        }
-    }];
-}
-
-- (NSTimeInterval)videoBufferDuration {
-    NSArray *loadedTimeRanges = [[_player currentItem] loadedTimeRanges];
-    CMTimeRange timeRange = [loadedTimeRanges.firstObject CMTimeRangeValue];// 获取缓冲区域
-    float startSeconds = CMTimeGetSeconds(timeRange.start);
-    float durationSeconds = CMTimeGetSeconds(timeRange.duration);
-    NSTimeInterval result = startSeconds + durationSeconds;// 计算缓冲总进度
-    return result;
-}
-
-#pragma mark - update
-- (void)updateVideoDuration
-{
-    self.videoDurationLabel.text = [self convertTime:_videoDuration];
-}
-- (void)updateVideoTime
-{
-    self.videoTimeLabel.text = [self convertTime:_currentTime];
-}
-- (void)updateBottomSlider
-{
-//    self.videoSlider.value = _currentTime;
-    [self.videoSlider setValue:_currentTime animated:YES];
-}
-
-#pragma mark ************************event***********************
-- (void)back
-{
-    if (self.delegate && [self.delegate respondsToSelector:@selector(tapVideoBack)]) {
-        [self.delegate tapVideoBack];
-    }
-}
-
-#pragma mark 播放或暂停
-- (void)playOrPause
-{
-    [self viewDismissAfterSeconds];
-    self.playOrPauseButton.selected = !self.playOrPauseButton.isSelected;
-    if (_isPlayed) {
-        [self.player pause];
-    }else{
-        [self.player play];
-    }
-    _isPlayed = !_isPlayed;
-}
-- (void)play
-{
-    [self.player play];
-    _isPlayed = YES;
-    self.playOrPauseButton.selected = YES;
-}
-- (void)pause
-{
-    [self.player pause];
-    _isPlayed = NO;
-    self.playOrPauseButton.selected = NO;
-}
-
-#pragma mark 拖动底部滑块
-- (void)videoSliderBeginDragging
-{
-    _isTouchDownVideoSlider = YES;
-    [self viewDismissAfterSeconds];
-}
-- (void)videoSliderDragging
-{
-    [self viewDismissAfterSeconds];
-    _isTouchDownVideoSlider = YES;
-    //更改当前时间
-    _currentTime = _videoSlider.value;
-    [self updateVideoTime];
-}
-- (void)videoSliderEndDragging
-{
-    
-    [self viewDismissAfterSeconds];
-    [self.player seekToTime:CMTimeMakeWithSeconds(_currentTime, NSEC_PER_SEC) toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero completionHandler:^(BOOL finished) {
-        _isTouchDownVideoSlider = NO;
-    }];
-}
-
-#pragma mark - 轻击屏幕
-- (void)tapScreen
-{
-    [self viewDismissAfterSeconds];
-    _hideAroundingViews = !_hideAroundingViews;
-    if (_hideAroundingViews) {
-        [self hideViews];
-    }else{
-        [self showViews];
-    }
-}
-
-#pragma mark ***********************notification***********************
-- (void)videolayDidEnd:(NSNotification *)notification
-{
-    __weak typeof(self) weakSelf = self;
-    [self.player seekToTime:kCMTimeZero completionHandler:^(BOOL finished) {
-        [weakSelf.videoSlider setValue:0.0 animated:YES];
-        weakSelf.playOrPauseButton.selected = NO;
-        weakSelf.isPlayed = NO;
-    }];
-}
-- (void)fullScreenClick:(UIButton *)sender
-{
-    [self viewDismissAfterSeconds];
-    
-    if (!_isFullScreenPlay) {
-        self.transform = CGAffineTransformIdentity;
-        self.transform = CGAffineTransformMakeRotation(M_PI / 2);
-        self.frame = CGRectMake(0, 0, SZScreenW, SZScreenH);
-        self.playerLayer.frame = CGRectMake(0,0, SZScreenH,SZScreenW);
-        [self setupSubViewFrames];
-        [[UIApplication sharedApplication].keyWindow addSubview:self];
-        self.isFullScreenPlay = YES;
-        self.fullScreenButton.selected = YES;
-    }else{
-        self.transform = CGAffineTransformIdentity;
-        self.frame = _frame;
-        self.playerLayer.frame =  self.bounds;
-        self.isFullScreenPlay = NO;
-        [self setupSubViewFrames];
-        self.fullScreenButton.selected = NO;
-    }
-    
-    //发送全屏通知
-    [[NSNotificationCenter defaultCenter] postNotificationName:SZFullScreenBtnNotification object:sender];
-}
-
-#pragma mark - 更新frame
-- (void)setupSubViewFrames
-{
-    //以self.playerLayer为基准
-    self.topView.frame = CGRectMake(0, 0, self.playerLayer.frame.size.width, topViewH);
-    self.bottomView.frame = CGRectMake(0, self.playerLayer.frame.size.height - bottomViewH, self.playerLayer.frame.size.width, bottomViewH);
-    self.fullScreenButton.frame = CGRectMake(self.playerLayer.frame.size.width - bottomViewH, 0, bottomViewH, bottomViewH);
-    self.videoDurationLabel.frame = CGRectMake(self.playerLayer.frame.size.width - self.fullScreenButton.bounds.size.width - self.videoTimeLabel.bounds.size.width, 0, self.videoTimeLabel.bounds.size.width, bottomViewH);
-    CGFloat progressViewY = (bottomViewH - 2 )* 0.5;
-    CGFloat progressViewW = self.playerLayer.bounds.size.width - CGRectGetMaxX(_videoTimeLabel.frame) - self.videoDurationLabel.frame.size.width - self.fullScreenButton.frame.size.width;
-    _videoProgressView.frame = CGRectMake(CGRectGetMaxX(_videoTimeLabel.frame), progressViewY, progressViewW, bottomViewH);
-    self.videoSlider.frame = CGRectMake(self.videoProgressView.frame.origin.x, 0, self.videoProgressView.bounds.size.width, bottomViewH);
-}
-
-#pragma mark - 计时隐藏
-//做任何操作之前调用此方法，重新计时，3秒后隐藏视图
-- (void)viewDismissAfterSeconds
-{
-    [UIView cancelPreviousPerformRequestsWithTarget:self selector:@selector(hideViews) object:nil];
-    [self performSelector:@selector(hideViews) withObject:nil afterDelay:3];
-}
-
-- (void)hideViews
-{
-    [UIView animateWithDuration:0.2 animations:^{
-        self.topView.alpha = 0;
-        self.bottomView.alpha = 0;
-        self.hideAroundingViews = YES;
-    }];
-}
-- (void)showViews
-{
-    [UIView animateWithDuration:0.2 animations:^{
-        self.topView.alpha = 1;
-        self.bottomView.alpha = 1;
-        self.hideAroundingViews = NO;
-    }];
-}
-
-#pragma mark - converTime
-- (NSString *)convertTime:(CGFloat)second{
-    NSDate *d = [NSDate dateWithTimeIntervalSince1970:second];
-    if (second/3600 >= 1) {
-        [self.dateFormatter setDateFormat:@"HH:mm:ss"];
-    } else {
-        [self.dateFormatter setDateFormat:@"mm:ss"];
-    }
-    NSString *showtimeNew = [self.dateFormatter stringFromDate:d];
-    return showtimeNew;
-}
-
-- (NSDateFormatter *)dateFormatter {
-    if (!_dateFormatter) {
-        _dateFormatter = [[NSDateFormatter alloc] init];
-    }
-    return _dateFormatter;
-}
-
-- (void)setVideoName:(NSString *)videoName
-{
-    _videoName = videoName;
-    self.titleLabel.text = videoName;
-}
-
-- (void)setVideoURL:(NSString *)videoURL
-{
-    _videoURL = videoURL;
-    
-    if (self.playerItem) {
-        //移除通知
-        [[NSNotificationCenter defaultCenter] removeObserver:self name:AVPlayerItemDidPlayToEndTimeNotification object:nil];
-        
-        //移除监听
-        [self removeObserverFromCurrentPlayerItem];
-    }
-    //更新数据
-    AVURLAsset *asset = [AVURLAsset assetWithURL:[NSURL URLWithString:self.videoURL]];
-    self.playerItem = [AVPlayerItem playerItemWithAsset:asset];
-    [self addObserver];
-    
-    [self.player replaceCurrentItemWithPlayerItem:self.playerItem];
-    
-    // 添加视频播放结束通知
-    [[NSNotificationCenter defaultCenter]addObserver:self selector:@selector(videolayDidEnd:) name:AVPlayerItemDidPlayToEndTimeNotification object:nil];
-    
-    if (self.player == nil) {
-        self.player = [AVPlayer playerWithPlayerItem:self.playerItem];
-        self.playerLayer = [AVPlayerLayer playerLayerWithPlayer:self.player];
-        self.playerLayer.frame = self.layer.bounds;
-        [self.layer addSublayer:self.playerLayer];
-    }
-}
-
-
-- (void)removeObserverFromCurrentPlayerItem
-{
-    [self.playerItem removeObserver:self forKeyPath:@"status"];
-    [self.playerItem removeObserver:self forKeyPath:@"loadedTimeRanges"];
-    [self.playerItem removeObserver:self forKeyPath:@"playbackBufferEmpty"];
-    [self.playerItem removeObserver:self forKeyPath:@"playbackLikelyToKeepUp"];
-}
-
--(void)dealloc
-{
-    [self.playerItem removeObserver:self forKeyPath:@"status"];
-    [self.playerItem removeObserver:self forKeyPath:@"loadedTimeRanges"];
-    [self.playerItem removeObserver:self forKeyPath:@"playbackBufferEmpty"];
-    [self.playerItem removeObserver:self forKeyPath:@"playbackLikelyToKeepUp"];
-    [self.player.currentItem cancelPendingSeeks];
-    [self.player.currentItem.asset cancelLoading];
-    [self.player pause];
-    [self removeFromSuperview];
-    [self.playerLayer removeFromSuperlayer];
-    [self.player replaceCurrentItemWithPlayerItem:nil];
-    self.player = nil;
-    self.playerItem = nil;
-    self.playerLayer = nil;
-}
-
 
 @end

@@ -31,26 +31,23 @@ extern NSString *const SZFullScreenBtnNotification;
 
 @interface SZPlayer : UIView
 
-@property (strong, nonatomic) AVPlayer *player;
 
+
+//视频title
 @property (copy, nonatomic) NSString *videoName;
+
+//视频url
 @property (copy, nonatomic) NSString *videoURL;
 
 @property (assign, nonatomic) id<SZPlayerDelegate>delegate;
 
-/**
- *  自定义播放器的frame
- */
-- (instancetype)initWithFrame:(CGRect)frame videoURL:(NSString *)videoURL;
-
-/**
- *  播放器的横向全屏
- */
-- (instancetype)initFullSvreenPlayerVideoURL:(NSString *)videoURL;
 
 - (void)play;
 
 - (void)pause;
+
+//页面销毁时需要调用彻底释放播放器
+- (void)releaseSZPlayer;
 
 
 @end
