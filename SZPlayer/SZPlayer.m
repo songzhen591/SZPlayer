@@ -23,7 +23,7 @@ static const CGFloat bottomViewH = 45;
     CGRect _frame;
 }
 
-@property (copy, nonatomic) NSString *videoURL;
+
 
 //播放核心组件
 
@@ -549,6 +549,43 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     self.titleLabel.text = videoName;
 }
 
+- (void)setVideoURL:(NSString *)videoURL
+{
+    _videoURL = videoURL;
+    
+    if (self.playerItem) {
+        //移除通知
+        [[NSNotificationCenter defaultCenter] removeObserver:self name:AVPlayerItemDidPlayToEndTimeNotification object:nil];
+        
+        //移除监听
+        [self removeObserverFromCurrentPlayerItem];
+    }
+    //更新数据
+    AVURLAsset *asset = [AVURLAsset assetWithURL:[NSURL URLWithString:self.videoURL]];
+    self.playerItem = [AVPlayerItem playerItemWithAsset:asset];
+    [self addObserver];
+    
+    [self.player replaceCurrentItemWithPlayerItem:self.playerItem];
+    
+    // 添加视频播放结束通知
+    [[NSNotificationCenter defaultCenter]addObserver:self selector:@selector(videolayDidEnd:) name:AVPlayerItemDidPlayToEndTimeNotification object:nil];
+    
+    if (self.player == nil) {
+        self.player = [AVPlayer playerWithPlayerItem:self.playerItem];
+        self.playerLayer = [AVPlayerLayer playerLayerWithPlayer:self.player];
+        self.playerLayer.frame = self.layer.bounds;
+        [self.layer addSublayer:self.playerLayer];
+    }
+}
+
+
+- (void)removeObserverFromCurrentPlayerItem
+{
+    [self.playerItem removeObserver:self forKeyPath:@"status"];
+    [self.playerItem removeObserver:self forKeyPath:@"loadedTimeRanges"];
+    [self.playerItem removeObserver:self forKeyPath:@"playbackBufferEmpty"];
+    [self.playerItem removeObserver:self forKeyPath:@"playbackLikelyToKeepUp"];
+}
 
 -(void)dealloc
 {

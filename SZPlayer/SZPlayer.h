@@ -34,6 +34,7 @@ extern NSString *const SZFullScreenBtnNotification;
 @property (strong, nonatomic) AVPlayer *player;
 
 @property (copy, nonatomic) NSString *videoName;
+@property (copy, nonatomic) NSString *videoURL;
 
 @property (assign, nonatomic) id<SZPlayerDelegate>delegate;
 
