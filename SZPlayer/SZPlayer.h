@@ -8,9 +8,13 @@
 
 #import <UIKit/UIKit.h>
 
+
+extern NSString *const SZFullScreenBtnNotification;
+
 @class SZPlayer;
 @class AVPlayer;
 @protocol SZPlayerDelegate <NSObject>
+
 
 @optional
 /**
@@ -18,13 +22,18 @@
  */
 - (void)videoDidPlayingOnTime:(NSTimeInterval)time;
 
-
+/**
+ *  点击返回（关闭）按钮
+ */
+- (void)tapVideoBack;
 
 @end
 
 @interface SZPlayer : UIView
 
 @property (strong, nonatomic) AVPlayer *player;
+
+@property (copy, nonatomic) NSString *videoName;
 
 @property (assign, nonatomic) id<SZPlayerDelegate>delegate;
 
@@ -38,9 +47,9 @@
  */
 - (instancetype)initFullSvreenPlayerVideoURL:(NSString *)videoURL;
 
-
 - (void)play;
 
 - (void)pause;
+
 
 @end

@@ -11,6 +11,10 @@
 
 @interface ViewController ()<SZPlayerDelegate>
 
+{
+//    BOOL _hideStatusBar;
+}
+
 @property (strong, nonatomic) SZPlayer *player;
 
 @end
@@ -19,32 +23,50 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
+    [self setNeedsStatusBarAppearanceUpdate];
     // Do any additional setup after loading the view, typically from a nib.
-    
-    UIView *view = [[UIView alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 260)];
-    [self.view addSubview:view];
-    _player = [[SZPlayer alloc] initWithFrame:CGRectMake(0, 0, self.view.bounds.size.width, 260) videoURL:@"http://baobab.cdn.wandoujia.com/14468618701471.mp4"];
+//    UIView *view = [[UIView alloc] initWithFrame:CGRectMake(0, 200, self.view.bounds.size.width, 260)];
+//    [self.view addSubview:view];
+    _player = [[SZPlayer alloc] initWithFrame:CGRectMake(0, 64, self.view.bounds.size.width, 200) videoURL:@"http://baobab.cdn.wandoujia.com/14468618701471.mp4"];
     _player.delegate = self;
-    [view addSubview:_player];
+    [self.view addSubview:_player];
+    
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(clickFull:) name:SZFullScreenBtnNotification object:nil];
+}
+
+- (void)clickFull:(NSNotification *)notification
+{
+    UIButton *button = [notification object];
+    if (button.selected) {
+//        _hideStatusBar = YES;
+//        [self prefersStatusBarHidden];
+        [[UIApplication sharedApplication] setStatusBarHidden:YES];
+    }else{
+//        _hideStatusBar = NO;
+//        [self prefersStatusBarHidden];
+        [[UIApplication sharedApplication] setStatusBarHidden:NO];
+    }
 }
 
 - (void)videoDidPlayingOnTime:(NSTimeInterval)time
 {
-    
-//    if (time > 5) {
-//        [_player pause];
-//        UIAlertController *alert = [UIAlertController alertControllerWithTitle:nil message:@"需要付款" preferredStyle:UIAlertControllerStyleAlert];
-//        UIAlertAction *action = [UIAlertAction actionWithTitle:@"确定" style:UIAlertActionStyleDefault handler:^(UIAlertAction * _Nonnull action) {
-//            
-//        }];
-//        [alert addAction:action];
-//        [self presentViewController:alert animated:YES completion:nil];
-//    }
+    NSLog(@"%f", time);
+}
+- (void)tapVideoBack
+{
+    NSLog(@"返回");
 }
 
-- (void)didReceiveMemoryWarning {
-    [super didReceiveMemoryWarning];
-    // Dispose of any resources that can be recreated.
-}
+//- (BOOL)prefersStatusBarHidden
+//{
+//    NSLog(@"%d", _hideStatusBar);
+//    return _hideStatusBar;;
+//}
+//- (UIStatusBarAnimation)preferredStatusBarUpdateAnimation
+//{
+//    return UIStatusBarAnimationNone;
+//}
+//
+
 
 @end

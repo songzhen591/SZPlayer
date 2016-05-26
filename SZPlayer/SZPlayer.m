@@ -59,6 +59,9 @@ static const CGFloat bottomViewH = 45;
 
 @implementation SZPlayer
 
+NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
+
+
 - (instancetype)initWithFrame:(CGRect)frame videoURL:(NSString *)videoURL
 {
     if (self = [super initWithFrame:frame]) {
@@ -79,6 +82,8 @@ static const CGFloat bottomViewH = 45;
         //添加轻击手势
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tapScreen)];
         [self addGestureRecognizer:tap];
+        
+        [self viewDismissAfterSeconds];
     }
     return self;
 }
@@ -106,7 +111,7 @@ static const CGFloat bottomViewH = 45;
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tapScreen)];
         [self addGestureRecognizer:tap];
         
-        [self fullScreenClick];
+//        [self fullScreenClick];
         
     }
     return self;
@@ -124,7 +129,6 @@ static const CGFloat bottomViewH = 45;
     _topView.frame = CGRectMake(0, 0, _frame.size.width, topViewH);
     [_topView addSubview:self.backButton];
     [_topView addSubview:self.titleLabel];
-    
     return _topView;
 }
 - (UIButton *)backButton
@@ -137,6 +141,7 @@ static const CGFloat bottomViewH = 45;
     _backButton.frame = CGRectMake(10, (topViewH - backButtonWH) *0.5, backButtonWH, backButtonWH);
     [_backButton setTitle:@"返回" forState:UIControlStateNormal];
     [_backButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [_backButton addTarget:self action:@selector(back) forControlEvents:UIControlEventTouchUpInside];
     return _backButton;
 }
 - (UILabel *)titleLabel
@@ -146,7 +151,7 @@ static const CGFloat bottomViewH = 45;
     }
     _titleLabel = [[UILabel alloc] init];
     _titleLabel.text = @"精彩的视频";
-    _titleLabel.font = [UIFont systemFontOfSize:17.0f];
+    _titleLabel.font = [UIFont systemFontOfSize:16.0f];
     _titleLabel.textColor = [UIColor whiteColor];
     _titleLabel.frame = CGRectMake(CGRectGetMaxX(_backButton.frame) + 30, 0, _frame.size.width - CGRectGetMaxX(_backButton.frame), topViewH);
     return _titleLabel;
@@ -234,7 +239,7 @@ static const CGFloat bottomViewH = 45;
         return _videoSlider;
     }
     _videoSlider = [[UISlider alloc] init];
-    _videoSlider.frame = _videoProgressView.frame;
+    _videoSlider.frame = CGRectMake(self.videoProgressView.frame.origin.x, 0, self.videoProgressView.bounds.size.width, bottomViewH);
     [_videoSlider setThumbImage:[UIImage imageNamed:@"progressThumb"] forState:UIControlStateNormal];
     [_videoSlider setThumbImage:[UIImage imageNamed:@"progressThumb"] forState:UIControlStateHighlighted];
     UIGraphicsBeginImageContextWithOptions((CGSize){ 1, 1 }, NO, 0.0f);
@@ -262,7 +267,7 @@ static const CGFloat bottomViewH = 45;
     CGFloat fullScreenButtonWH = bottomViewH;
     CGFloat fullScreenButtonX = _frame.size.width - fullScreenButtonWH;
     _fullScreenButton.frame = CGRectMake(fullScreenButtonX, 0, fullScreenButtonWH, fullScreenButtonWH);
-    [_fullScreenButton addTarget:self action:@selector(fullScreenClick) forControlEvents:UIControlEventTouchUpInside];
+    [_fullScreenButton addTarget:self action:@selector(fullScreenClick:) forControlEvents:UIControlEventTouchUpInside];
     return _fullScreenButton;
 }
 
@@ -372,13 +377,22 @@ static const CGFloat bottomViewH = 45;
 }
 - (void)updateBottomSlider
 {
-    self.videoSlider.value = _currentTime;
+//    self.videoSlider.value = _currentTime;
+    [self.videoSlider setValue:_currentTime animated:YES];
 }
 
 #pragma mark ************************event***********************
+- (void)back
+{
+    if (self.delegate && [self.delegate respondsToSelector:@selector(tapVideoBack)]) {
+        [self.delegate tapVideoBack];
+    }
+}
+
 #pragma mark 播放或暂停
 - (void)playOrPause
 {
+    [self viewDismissAfterSeconds];
     self.playOrPauseButton.selected = !self.playOrPauseButton.isSelected;
     if (_isPlayed) {
         [self.player pause];
@@ -404,9 +418,11 @@ static const CGFloat bottomViewH = 45;
 - (void)videoSliderBeginDragging
 {
     _isTouchDownVideoSlider = YES;
+    [self viewDismissAfterSeconds];
 }
 - (void)videoSliderDragging
 {
+    [self viewDismissAfterSeconds];
     _isTouchDownVideoSlider = YES;
     //更改当前时间
     _currentTime = _videoSlider.value;
@@ -414,26 +430,22 @@ static const CGFloat bottomViewH = 45;
 }
 - (void)videoSliderEndDragging
 {
-    _isTouchDownVideoSlider = NO;
+    
+    [self viewDismissAfterSeconds];
     [self.player seekToTime:CMTimeMakeWithSeconds(_currentTime, NSEC_PER_SEC) toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero completionHandler:^(BOOL finished) {
-        NSLog(@"跳转完毕");
+        _isTouchDownVideoSlider = NO;
     }];
 }
 
 #pragma mark - 轻击屏幕
 - (void)tapScreen
 {
+    [self viewDismissAfterSeconds];
     _hideAroundingViews = !_hideAroundingViews;
     if (_hideAroundingViews) {
-        [UIView animateWithDuration:0.2 animations:^{
-            self.topView.alpha = 0;
-            self.bottomView.alpha = 0;
-        }];
+        [self hideViews];
     }else{
-        [UIView animateWithDuration:0.2 animations:^{
-            self.topView.alpha = 1;
-            self.bottomView.alpha = 1;
-        }];
+        [self showViews];
     }
 }
 
@@ -447,16 +459,16 @@ static const CGFloat bottomViewH = 45;
         weakSelf.isPlayed = NO;
     }];
 }
-
-
-- (void)fullScreenClick
+- (void)fullScreenClick:(UIButton *)sender
 {
+    [self viewDismissAfterSeconds];
+    
     if (!_isFullScreenPlay) {
         self.transform = CGAffineTransformIdentity;
         self.transform = CGAffineTransformMakeRotation(M_PI / 2);
         self.frame = CGRectMake(0, 0, SZScreenW, SZScreenH);
         self.playerLayer.frame = CGRectMake(0,0, SZScreenH,SZScreenW);
-        [self setupHorizontalScreenFrames];
+        [self setupSubViewFrames];
         [[UIApplication sharedApplication].keyWindow addSubview:self];
         self.isFullScreenPlay = YES;
         self.fullScreenButton.selected = YES;
@@ -465,45 +477,51 @@ static const CGFloat bottomViewH = 45;
         self.frame = _frame;
         self.playerLayer.frame =  self.bounds;
         self.isFullScreenPlay = NO;
-        [self setupVerticalScreenFrames];
+        [self setupSubViewFrames];
         self.fullScreenButton.selected = NO;
     }
+    
+    //发送全屏通知
+    [[NSNotificationCenter defaultCenter] postNotificationName:SZFullScreenBtnNotification object:sender];
 }
 
-- (void)setupVerticalScreenFrames
+#pragma mark - 更新frame
+- (void)setupSubViewFrames
 {
-    NSLog(@"%@", NSStringFromCGRect(self.frame));
-    
-    _topView.frame = CGRectMake(0, 0, _frame.size.width, topViewH);
-    _bottomView.frame = CGRectMake(0, _frame.size.height - bottomViewH, _frame.size.width, bottomViewH);
-    
-    CGFloat fullScreenButtonWH = bottomViewH;
-    CGFloat fullScreenButtonX = _frame.size.width - fullScreenButtonWH;
-    _fullScreenButton.frame = CGRectMake(fullScreenButtonX, 0, fullScreenButtonWH, fullScreenButtonWH);
-    
-    CGFloat durationLabelX = _frame.size.width - CGRectGetWidth(self.fullScreenButton.frame) - _videoTimeLabel.bounds.size.width;
-    _videoDurationLabel.frame = CGRectMake(durationLabelX, 0, _videoTimeLabel.bounds.size.width, _videoTimeLabel.bounds.size.height);
-    
+    //以self.playerLayer为基准
+    self.topView.frame = CGRectMake(0, 0, self.playerLayer.frame.size.width, topViewH);
+    self.bottomView.frame = CGRectMake(0, self.playerLayer.frame.size.height - bottomViewH, self.playerLayer.frame.size.width, bottomViewH);
+    self.fullScreenButton.frame = CGRectMake(self.playerLayer.frame.size.width - bottomViewH, 0, bottomViewH, bottomViewH);
+    self.videoDurationLabel.frame = CGRectMake(self.playerLayer.frame.size.width - self.fullScreenButton.bounds.size.width - self.videoTimeLabel.bounds.size.width, 0, self.videoTimeLabel.bounds.size.width, bottomViewH);
     CGFloat progressViewY = (bottomViewH - 2 )* 0.5;
-    CGFloat progressViewW = _frame.size.width - CGRectGetMaxX(_videoTimeLabel.frame) - self.videoDurationLabel.frame.size.width - self.fullScreenButton.frame.size.width;
+    CGFloat progressViewW = self.playerLayer.bounds.size.width - CGRectGetMaxX(_videoTimeLabel.frame) - self.videoDurationLabel.frame.size.width - self.fullScreenButton.frame.size.width;
     _videoProgressView.frame = CGRectMake(CGRectGetMaxX(_videoTimeLabel.frame), progressViewY, progressViewW, bottomViewH);
-    self.videoSlider.frame = self.videoProgressView.frame;
+    self.videoSlider.frame = CGRectMake(self.videoProgressView.frame.origin.x, 0, self.videoProgressView.bounds.size.width, bottomViewH);
 }
 
-#pragma mark - 屏幕旋转后重新控件frame
-- (void)setupHorizontalScreenFrames
+#pragma mark - 计时隐藏
+//做任何操作之前调用此方法，重新计时，3秒后隐藏视图
+- (void)viewDismissAfterSeconds
 {
-    NSLog(@"%@", NSStringFromCGRect(self.playerLayer.frame));
-    self.topView.frame = CGRectMake(0,0 ,SZScreenH, topViewH);
-    self.bottomView.frame = CGRectMake(0, SZScreenW - bottomViewH, SZScreenH, bottomViewH);
-    CGFloat fullscreenButtonX = SZScreenH - bottomViewH;
-    self.fullScreenButton.frame = CGRectMake(fullscreenButtonX, 0, bottomViewH, bottomViewH);
-    
-    CGFloat videoDurationLabelX = SZScreenH - self.videoTimeLabel.frame.size.width - self.fullScreenButton.frame.size.width;
-    self.videoDurationLabel.frame = CGRectMake(videoDurationLabelX, 0, self.videoTimeLabel.frame.size.width, bottomViewH);
-    
-    self.videoProgressView.frame = CGRectMake(self.videoProgressView.frame.origin.x,self.videoProgressView.frame.origin.y , SZScreenH - self.videoProgressView.frame.origin.x - self.videoDurationLabel.frame.size.width - self.fullScreenButton.frame.size.width, self.videoProgressView.frame.size.height);
-    self.videoSlider.frame = self.videoProgressView.frame;
+    [UIView cancelPreviousPerformRequestsWithTarget:self selector:@selector(hideViews) object:nil];
+    [self performSelector:@selector(hideViews) withObject:nil afterDelay:3];
+}
+
+- (void)hideViews
+{
+    [UIView animateWithDuration:0.2 animations:^{
+        self.topView.alpha = 0;
+        self.bottomView.alpha = 0;
+        self.hideAroundingViews = YES;
+    }];
+}
+- (void)showViews
+{
+    [UIView animateWithDuration:0.2 animations:^{
+        self.topView.alpha = 1;
+        self.bottomView.alpha = 1;
+        self.hideAroundingViews = NO;
+    }];
 }
 
 #pragma mark - converTime
@@ -525,6 +543,12 @@ static const CGFloat bottomViewH = 45;
     return _dateFormatter;
 }
 
+- (void)setVideoName:(NSString *)videoName
+{
+    _videoName = videoName;
+    self.titleLabel.text = videoName;
+}
+
 
 -(void)dealloc
 {
@@ -532,7 +556,6 @@ static const CGFloat bottomViewH = 45;
     [self.playerItem removeObserver:self forKeyPath:@"loadedTimeRanges"];
     [self.playerItem removeObserver:self forKeyPath:@"playbackBufferEmpty"];
     [self.playerItem removeObserver:self forKeyPath:@"playbackLikelyToKeepUp"];
-    
     [self.player.currentItem cancelPendingSeeks];
     [self.player.currentItem.asset cancelLoading];
     [self.player pause];
