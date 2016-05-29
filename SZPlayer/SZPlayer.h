@@ -31,8 +31,6 @@ extern NSString *const SZFullScreenBtnNotification;
 
 @interface SZPlayer : UIView
 
-
-
 //视频title
 @property (copy, nonatomic) NSString *videoName;
 
@@ -40,7 +38,6 @@ extern NSString *const SZFullScreenBtnNotification;
 @property (copy, nonatomic) NSString *videoURL;
 
 @property (assign, nonatomic) id<SZPlayerDelegate>delegate;
-
 
 - (void)play;
 

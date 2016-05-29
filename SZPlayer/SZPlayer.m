@@ -15,8 +15,18 @@
 //屏幕高度
 #define SZScreenH [[UIScreen mainScreen] bounds].size.height
 
+//手势滑动，方向是以视频播放器为基准的，不是以屏幕
+typedef NS_ENUM(NSUInteger, PanGestureRecognizerDirection) {
+    PanGestureRecognizerDirectionUp,
+    PanGestureRecognizerDirectionDown,
+    PanGestureRecognizerDirectionLeft,
+    PanGestureRecognizerDirectionRight
+};
+
 static const CGFloat topViewH = 45;
 static const CGFloat bottomViewH = 45;
+static const CGFloat rateViewW = 120;
+static const CGFloat rateViewH = 80;
 
 @interface SZPlayer ()
 {
@@ -35,6 +45,12 @@ static const CGFloat bottomViewH = 45;
 @property (strong, nonatomic) UIButton *backButton;
 @property (strong, nonatomic) UILabel *titleLabel;
 
+
+//全屏水平滑动时显示的view
+@property (strong, nonatomic) UIView *rateView;
+@property (strong, nonatomic) UIImageView *rateImageView;
+@property (strong, nonatomic) UILabel *rateTimeLabel;
+
 //底部view
 @property (strong, nonatomic) UIImageView *bottomView;
 @property (strong, nonatomic) UIButton *playOrPauseButton;
@@ -44,18 +60,25 @@ static const CGFloat bottomViewH = 45;
 @property (strong, nonatomic) UIProgressView *videoProgressView;
 @property (strong, nonatomic) UIButton *fullScreenButton;
 
-@property (assign, nonatomic) NSTimeInterval currentTime;           //记录当前播放时间或者被拖动到的时间点
-@property (assign, nonatomic) NSTimeInterval videoDuration;         //视频总时长
+@property (assign, nonatomic) NSTimeInterval currentTime;                       //记录当前播放时间或者被拖动到的时间点
+@property (assign, nonatomic) NSTimeInterval videoDuration;                     //视频总时长
 
 @property (strong, nonatomic) NSDateFormatter *dateFormatter;
 
-@property (assign, nonatomic) BOOL isPlayed;                        //视频是否正在播放
-@property (assign, nonatomic) BOOL isTouchDownVideoSlider;          //用户是否正在拖动底部滑块
-@property (assign, nonatomic) BOOL hideAroundingViews;              //是否显示上下view
+@property (assign, nonatomic) BOOL isPlayed;                                    //视频是否正在播放
+@property (assign, nonatomic) BOOL isTouchDownVideoSliderOrDraggingScreen;      //用户是否正在拖动底部滑块或滑动屏幕
+@property (assign, nonatomic) BOOL hideAroundingViews;                          //是否显示上下view
 
-@property (assign, nonatomic) BOOL isFullScreenPlay;                //是否是全屏显示
+@property (assign, nonatomic) BOOL isFullScreenPlay;                            //是否是全屏显示
 
 @property (strong, nonatomic) id playbackObj;
+
+
+@property (assign, nonatomic) CGPoint panBeginPoint;                                //滑动初始值
+@property (assign, nonatomic) PanGestureRecognizerDirection panDirection;           //滑动方向
+@property (strong, nonatomic) UIPanGestureRecognizer *pan;
+@property (assign, nonatomic) NSTimeInterval panBeginVideoPlayTime;                 //记录滑动开始时，播放的位置
+
 
 @end
 
@@ -68,7 +91,6 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
 {
     if (self = [super initWithFrame:frame]) {
         
-        NSLog(@"%@", NSStringFromCGRect(frame));
         _frame = frame;
         _isPlayed = YES;
         
@@ -78,6 +100,11 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
         
         [self addSubview:self.bottomView];
         
+        [self addSubview:self.rateView];
+        
+        [self.layer insertSublayer:self.playerLayer atIndex:0];
+        
+        //注册视频播放完毕的通知
         [[NSNotificationCenter defaultCenter]addObserver:self selector:@selector(videolayDidEnd:) name:AVPlayerItemDidPlayToEndTimeNotification object:_playerItem];
         
         //添加轻击手势
@@ -114,17 +141,41 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     [self addObserverToCurrentPlayerItem];
     //如果self.player存在则替换item
     [self.player replaceCurrentItemWithPlayerItem:self.playerItem];
-    //不存在则创建
-    if (!self.player) {
-        self.player = [AVPlayer playerWithPlayerItem:self.playerItem];
-        self.playerLayer = [AVPlayerLayer playerLayerWithPlayer:self.player];
-        self.playerLayer.videoGravity = AVLayerVideoGravityResizeAspect;
-        self.playerLayer.frame = self.layer.bounds;
-        [self.layer insertSublayer:self.playerLayer atIndex:0];
-    }
+
     // 添加视频播放结束通知
     [[NSNotificationCenter defaultCenter]addObserver:self selector:@selector(videolayDidEnd:) name:AVPlayerItemDidPlayToEndTimeNotification object:nil];
 }
+
+- (AVPlayer *)player
+{
+    if (_player) {
+        return _player;
+    }
+    _player = [AVPlayer playerWithPlayerItem:self.playerItem];
+    return _player;
+}
+- (AVPlayerItem *)playerItem
+{
+    if (_playerItem) {
+        return _playerItem;
+    }
+    AVURLAsset *asset = [AVURLAsset assetWithURL:[NSURL URLWithString:self.videoURL]];
+    _playerItem = [AVPlayerItem playerItemWithAsset:asset];
+    [self addObserverToCurrentPlayerItem];
+    return _playerItem;
+}
+- (AVPlayerLayer *)playerLayer
+{
+    if (_playerLayer) {
+        return _playerLayer;
+    }
+    _playerLayer = [AVPlayerLayer playerLayerWithPlayer:self.player];
+    _playerLayer.frame = self.layer.bounds;
+    _playerLayer.videoGravity = AVLayerVideoGravityResizeAspect;
+    return _playerLayer;
+}
+
+
 
 #pragma mark - 监听self.playerItem
 - (void)addObserverToCurrentPlayerItem
@@ -184,7 +235,7 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
             [weakSelf.delegate videoDidPlayingOnTime:CMTimeGetSeconds(weakSelf.playerItem.currentTime)];
         }
         
-        if (!weakSelf.isTouchDownVideoSlider) {
+        if (!weakSelf.isTouchDownVideoSliderOrDraggingScreen) {
             _currentTime = CMTimeGetSeconds(weakSelf.playerItem.currentTime);
             [weakSelf updateVideoTime];
             [weakSelf updateBottomSlider];
@@ -213,6 +264,15 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
 - (void)updateBottomSlider
 {
     [self.videoSlider setValue:_currentTime animated:YES];
+}
+- (void)updateRateView
+{
+    self.rateTimeLabel.text = [NSString stringWithFormat:@"%@ / %@", [self convertTime:self.currentTime] , [self convertTime:self.videoDuration]];
+    if (self.panDirection == PanGestureRecognizerDirectionRight) {
+        self.rateImageView.image = [UIImage imageNamed:@"player_goforward"];
+    }else if (self.panDirection == PanGestureRecognizerDirectionLeft){
+        self.rateImageView.image = [UIImage imageNamed:@"player_back"];
+    }
 }
 
 #pragma mark ************************event***********************
@@ -251,23 +311,22 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
 #pragma mark 拖动底部滑块
 - (void)videoSliderBeginDragging
 {
-    _isTouchDownVideoSlider = YES;
+    _isTouchDownVideoSliderOrDraggingScreen = YES;
     [self viewDismissAfterSeconds];
 }
 - (void)videoSliderDragging
 {
     [self viewDismissAfterSeconds];
-    _isTouchDownVideoSlider = YES;
+    _isTouchDownVideoSliderOrDraggingScreen = YES;
     //更改当前时间
     _currentTime = _videoSlider.value;
     [self updateVideoTime];
 }
 - (void)videoSliderEndDragging
 {
-    
     [self viewDismissAfterSeconds];
     [self.player seekToTime:CMTimeMakeWithSeconds(_currentTime, NSEC_PER_SEC) toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero completionHandler:^(BOOL finished) {
-        _isTouchDownVideoSlider = NO;
+        _isTouchDownVideoSliderOrDraggingScreen = NO;
     }];
 }
 
@@ -299,11 +358,19 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
             self.fullScreenButton.selected = YES;
         }];
         
+        //全屏模式下添加pan手势
+        self.pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(pan:)];
+        [self addGestureRecognizer:self.pan];
+        
     }else{
+        
+        
+        //移除手势
+        [self removeGestureRecognizer:self.pan];
+        
         [UIView animateWithDuration:0.2 animations:^{
             self.transform = CGAffineTransformIdentity;
             self.frame = _frame;
-            NSLog(@"%@", NSStringFromCGRect(self.frame));
             self.playerLayer.frame =  self.bounds;
             self.isFullScreenPlay = NO;
             [self setupSubViewFrames];
@@ -314,6 +381,107 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     
     //发送全屏通知
     [[NSNotificationCenter defaultCenter] postNotificationName:SZFullScreenBtnNotification object:sender];
+}
+
+
+- (void)pan:(UIPanGestureRecognizer *)pan
+{
+    CGPoint velocityPoint = [pan velocityInView:self];
+    
+    switch (pan.state) {
+        case UIGestureRecognizerStateBegan:{
+            
+            self.isTouchDownVideoSliderOrDraggingScreen = YES;
+            
+            //记录滑动初始值
+            self.panBeginPoint = [pan locationInView:self];
+            
+            self.panBeginVideoPlayTime = self.currentTime;
+            
+            break;
+        }
+            
+        case UIGestureRecognizerStateChanged:{
+            //判断滑动方向
+            BOOL isHorizontalPan = (fabs(velocityPoint.x)) > (fabs(velocityPoint.y));
+            
+            if (isHorizontalPan) {
+                
+                self.rateView.hidden = NO;
+                
+                if (velocityPoint.x > 0) {
+                    self.panDirection = PanGestureRecognizerDirectionRight;
+                }else{
+                    self.panDirection = PanGestureRecognizerDirectionLeft;
+                }
+                
+                [self horizontalDraggingOnScreen];
+                
+            }else{
+                if (velocityPoint.y > 0) {
+                    self.panDirection = PanGestureRecognizerDirectionDown;
+                }else{
+                    self.panDirection = PanGestureRecognizerDirectionUp;
+                }
+            }
+            break;
+        }
+          
+        case UIGestureRecognizerStateEnded:{
+            
+            self.rateView.hidden = YES;
+            
+            switch (_panDirection) {
+                case PanGestureRecognizerDirectionRight: case PanGestureRecognizerDirectionLeft:
+                    
+                    [self horizontalDragEndOnScreen];
+                    break;
+                case PanGestureRecognizerDirectionDown: case PanGestureRecognizerDirectionUp:
+                    
+                    break;
+                    
+                default:
+                    break;
+            }
+            break;
+            
+            break;
+        }
+            
+        default:
+            break;
+    }
+}
+
+#pragma mark - 处理手势的水平滑动
+- (void)horizontalDraggingOnScreen
+{
+    
+    self.isTouchDownVideoSliderOrDraggingScreen = YES;
+    CGFloat changedX = [self.pan locationInView:self].x - self.panBeginPoint.x;
+    CGFloat scale = changedX / self.playerLayer.bounds.size.width;
+    _currentTime = self.panBeginVideoPlayTime + self.videoSlider.maximumValue * scale;
+    
+    //保证已播放时间可用
+    if (_currentTime < 0) {
+        _currentTime = 0;
+    }
+    if (_currentTime > _videoDuration) {
+        _currentTime = _videoDuration;
+    }
+    
+    [self updateBottomSlider];
+    [self updateVideoTime];
+    [self updateRateView];
+    
+}
+- (void)horizontalDragEndOnScreen
+{
+    //跳转
+    [self viewDismissAfterSeconds];
+    [self.player seekToTime:CMTimeMakeWithSeconds(_currentTime, NSEC_PER_SEC) toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero completionHandler:^(BOOL finished) {
+        _isTouchDownVideoSliderOrDraggingScreen = NO;
+    }];
 }
 
 
@@ -340,6 +508,8 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     CGFloat progressViewW = self.playerLayer.bounds.size.width - CGRectGetMaxX(_videoTimeLabel.frame) - self.videoDurationLabel.frame.size.width - self.fullScreenButton.frame.size.width;
     _videoProgressView.frame = CGRectMake(CGRectGetMaxX(_videoTimeLabel.frame), progressViewY, progressViewW, bottomViewH);
     self.videoSlider.frame = CGRectMake(self.videoProgressView.frame.origin.x, 0, self.videoProgressView.bounds.size.width, bottomViewH);
+    
+    _rateView.center = CGPointMake(self.playerLayer.bounds.size.width *0.5, self.playerLayer.bounds.size.height *0.5);
 }
 
 #pragma mark - 计时隐藏
@@ -419,7 +589,6 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
 {
     [self releaseSZPlayer];
 }
-
 
 
 #pragma mark ----------------topView
@@ -575,5 +744,45 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     [_fullScreenButton addTarget:self action:@selector(fullScreenClick:) forControlEvents:UIControlEventTouchUpInside];
     return _fullScreenButton;
 }
+
+- (UIView *)rateView
+{
+    if (_rateView) {
+        return _rateView;
+    }
+    _rateView = [[UIView alloc] init];
+    _rateView.backgroundColor = self.topView.backgroundColor;
+    _rateView.center = CGPointMake(self.playerLayer.bounds.size.width *0.5, self.playerLayer.bounds.size.height *0.5);
+    _rateView.bounds = CGRectMake(0, 0, rateViewW, rateViewH);
+    _rateView.hidden = YES;
+    
+    [_rateView addSubview:self.rateImageView];
+    [_rateView addSubview:self.rateTimeLabel];
+    return _rateView;
+}
+- (UIImageView *)rateImageView
+{
+    if (_rateImageView) {
+        return _rateImageView;
+    }
+    _rateImageView = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"player_goforward"]];
+    _rateImageView.contentMode = UIViewContentModeScaleAspectFit;
+    _rateImageView.frame = CGRectMake(0, 0, rateViewW, 40);
+    return _rateImageView;
+}
+- (UILabel *)rateTimeLabel
+{
+    if (_rateTimeLabel) {
+        return _rateTimeLabel;
+    }
+    _rateTimeLabel = [[UILabel alloc] init];
+    _rateTimeLabel.text = @"00:00:00 / 00:00:00";
+    _rateTimeLabel.textAlignment = NSTextAlignmentCenter;
+    _rateTimeLabel.frame = CGRectMake(0, CGRectGetMaxY(self.rateImageView.frame), rateViewW, rateViewH - self.rateImageView.frame.size.height);
+    _rateTimeLabel.font = [UIFont systemFontOfSize:12.0];
+    _rateTimeLabel.textColor = [UIColor whiteColor];
+    return _rateTimeLabel;
+}
+
 
 @end
