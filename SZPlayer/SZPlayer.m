@@ -27,13 +27,13 @@ static const CGFloat topViewH = 45;
 static const CGFloat bottomViewH = 45;
 static const CGFloat rateViewW = 120;
 static const CGFloat rateViewH = 80;
+static const CGFloat volumeH = 200;
+static const CGFloat volumeW = 40;
 
 @interface SZPlayer ()
 {
     CGRect _frame;
 }
-
-
 
 //播放核心组件
 @property (strong, nonatomic) AVPlayer *player;
@@ -50,6 +50,15 @@ static const CGFloat rateViewH = 80;
 @property (strong, nonatomic) UIView *rateView;
 @property (strong, nonatomic) UIImageView *rateImageView;
 @property (strong, nonatomic) UILabel *rateTimeLabel;
+
+//音量view
+@property (strong, nonatomic) UIView *volumeView;
+@property (strong, nonatomic) UIImageView *volumeUpImageView;
+@property (strong, nonatomic) UIImageView *volumeDownImageView;
+@property (strong, nonatomic) UISlider *volumeSlider;
+@property (strong, nonatomic) UISlider *systemVolumeSlider;
+@property (strong, nonatomic) MPVolumeView *systemVolumeView;
+
 
 //底部view
 @property (strong, nonatomic) UIImageView *bottomView;
@@ -79,6 +88,8 @@ static const CGFloat rateViewH = 80;
 @property (strong, nonatomic) UIPanGestureRecognizer *pan;
 @property (assign, nonatomic) NSTimeInterval panBeginVideoPlayTime;                 //记录滑动开始时，播放的位置
 
+@property (assign, nonatomic) CGFloat panBeginSystemVolume;                  //记录滑动开始时，音量大小
+@property (assign, nonatomic) CGFloat currentVolume;                                //当前音量
 
 @end
 
@@ -100,18 +111,29 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
         
         [self addSubview:self.bottomView];
         
+        [self addSubview:self.volumeView];
+        
         [self addSubview:self.rateView];
+        
+        [self addSubview:self.systemVolumeView];
         
         [self.layer insertSublayer:self.playerLayer atIndex:0];
         
         //注册视频播放完毕的通知
         [[NSNotificationCenter defaultCenter]addObserver:self selector:@selector(videolayDidEnd:) name:AVPlayerItemDidPlayToEndTimeNotification object:_playerItem];
         
+        //监听系统音量变化
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(volumeChanged:) name:@"AVSystemController_SystemVolumeDidChangeNotification" object:nil];
+        //让 UIApplication 开始响应远程的控制，必须添加，不然没效果
+        [[UIApplication sharedApplication] beginReceivingRemoteControlEvents];
+        
         //添加轻击手势
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tapScreen)];
         [self addGestureRecognizer:tap];
         
         [self viewDismissAfterSeconds];
+        
+        
     }
     return self;
 }
@@ -274,6 +296,14 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
         self.rateImageView.image = [UIImage imageNamed:@"player_back"];
     }
 }
+- (void)updateCustomVolume
+{
+    [self.volumeSlider setValue:self.currentVolume animated:YES];
+}
+- (void)updateSystemVolume
+{
+    [self.systemVolumeSlider setValue:self.currentVolume animated:YES];
+}
 
 #pragma mark ************************event***********************
 - (void)back
@@ -362,12 +392,13 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
         self.pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(pan:)];
         [self addGestureRecognizer:self.pan];
         
+        self.volumeView.hidden = NO;
+        
     }else{
         
-        
+        self.volumeView.hidden = YES;
         //移除手势
         [self removeGestureRecognizer:self.pan];
-        
         [UIView animateWithDuration:0.2 animations:^{
             self.transform = CGAffineTransformIdentity;
             self.frame = _frame;
@@ -378,7 +409,6 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
         }];
         
     }
-    
     //发送全屏通知
     [[NSNotificationCenter defaultCenter] postNotificationName:SZFullScreenBtnNotification object:sender];
 }
@@ -396,17 +426,27 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
             //记录滑动初始值
             self.panBeginPoint = [pan locationInView:self];
             
+            //记录滑动时已经播放的时间
             self.panBeginVideoPlayTime = self.currentTime;
+            
+            //记录滑动开始时的音量
+            self.panBeginSystemVolume = self.volumeSlider.value;
             
             break;
         }
             
         case UIGestureRecognizerStateChanged:{
+            
+            [self showViews];
+            
+            //移动中不能隐藏
+            [self viewDismissAfterSeconds];
+            
             //判断滑动方向
             BOOL isHorizontalPan = (fabs(velocityPoint.x)) > (fabs(velocityPoint.y));
             
             if (isHorizontalPan) {
-                
+                //显示提示
                 self.rateView.hidden = NO;
                 
                 if (velocityPoint.x > 0) {
@@ -418,11 +458,15 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
                 [self horizontalDraggingOnScreen];
                 
             }else{
+                //隐藏提示框
+                self.rateView.hidden = YES;
                 if (velocityPoint.y > 0) {
                     self.panDirection = PanGestureRecognizerDirectionDown;
                 }else{
                     self.panDirection = PanGestureRecognizerDirectionUp;
                 }
+                
+                [self verticalDraggingOnScreen];
             }
             break;
         }
@@ -433,11 +477,9 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
             
             switch (_panDirection) {
                 case PanGestureRecognizerDirectionRight: case PanGestureRecognizerDirectionLeft:
-                    
                     [self horizontalDragEndOnScreen];
                     break;
                 case PanGestureRecognizerDirectionDown: case PanGestureRecognizerDirectionUp:
-                    
                     break;
                     
                 default:
@@ -445,7 +487,6 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
             }
             break;
             
-            break;
         }
             
         default:
@@ -484,6 +525,23 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     }];
 }
 
+#pragma mark - 处理手势的竖直滑动
+- (void)verticalDraggingOnScreen
+{
+    CGFloat changedY = self.panBeginPoint.y - [self.pan locationInView:self].y;
+    CGFloat scale = changedY / self.playerLayer.bounds.size.height;
+    self.currentVolume = _panBeginSystemVolume + scale;
+    [self updateCustomVolume];
+    [self updateSystemVolume];
+}
+
+#pragma mark - 滑动音量滑块
+- (void)customVolumeChanged:(UISlider *)slider
+{
+    self.currentVolume = slider.value;
+    [self updateSystemVolume];
+}
+
 
 #pragma mark ***********************notification***********************
 - (void)videolayDidEnd:(NSNotification *)notification
@@ -495,6 +553,14 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
         weakSelf.isPlayed = NO;
     }];
 }
+
+#pragma mark  系统音量变化(通知)
+- (void)volumeChanged:(NSNotification *)notification
+{
+    _currentVolume = [notification.userInfo[@"AVSystemController_AudioVolumeNotificationParameter"] floatValue];
+    [self updateCustomVolume];
+}
+
 
 #pragma mark - 更新frame
 - (void)setupSubViewFrames
@@ -508,8 +574,10 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     CGFloat progressViewW = self.playerLayer.bounds.size.width - CGRectGetMaxX(_videoTimeLabel.frame) - self.videoDurationLabel.frame.size.width - self.fullScreenButton.frame.size.width;
     _videoProgressView.frame = CGRectMake(CGRectGetMaxX(_videoTimeLabel.frame), progressViewY, progressViewW, bottomViewH);
     self.videoSlider.frame = CGRectMake(self.videoProgressView.frame.origin.x, 0, self.videoProgressView.bounds.size.width, bottomViewH);
-    
     _rateView.center = CGPointMake(self.playerLayer.bounds.size.width *0.5, self.playerLayer.bounds.size.height *0.5);
+    CGFloat volumeViewY = (self.playerLayer.frame.size.height - volumeH) * 0.5;
+    CGFloat volumeViewW = 40;
+    _volumeView.frame = CGRectMake(20, volumeViewY, volumeViewW, volumeH);
 }
 
 #pragma mark - 计时隐藏
@@ -525,6 +593,7 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     [UIView animateWithDuration:0.2 animations:^{
         self.topView.alpha = 0;
         self.bottomView.alpha = 0;
+        self.volumeView.alpha = 0;
         self.hideAroundingViews = YES;
     }];
 }
@@ -533,6 +602,7 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     [UIView animateWithDuration:0.2 animations:^{
         self.topView.alpha = 1;
         self.bottomView.alpha = 1;
+        self.volumeView.alpha = 1;
         self.hideAroundingViews = NO;
     }];
 }
@@ -556,6 +626,11 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     return _dateFormatter;
 }
 
+#pragma mark 获取系统音量
+- (CGFloat)deviceVolume
+{
+    return [[AVAudioSession sharedInstance] outputVolume];
+}
 
 - (void)removeObserverFromCurrentPlayerItem
 {
@@ -568,6 +643,11 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
 #pragma mark - 释放
 - (void)releaseSZPlayer
 {
+    //移除通知
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:AVPlayerItemDidPlayToEndTimeNotification object:self.playerItem];
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:@"AVSystemController_SystemVolumeDidChangeNotification" object:nil];
+    [[UIApplication sharedApplication] endReceivingRemoteControlEvents];
+    
     [self removeObserverFromCurrentPlayerItem];
     
     //移除此监听一定要提前，防止防止页面已经注销，但仍然对视频进行监控
@@ -582,6 +662,8 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     self.player = nil;
     self.playerItem = nil;
     self.playerLayer = nil;
+    
+    
     
 }
 
@@ -705,6 +787,7 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     CGFloat progressViewY = (bottomViewH - 2 )* 0.5;
     CGFloat progressViewW = _frame.size.width - CGRectGetMaxX(_videoTimeLabel.frame) - self.videoDurationLabel.frame.size.width - self.fullScreenButton.frame.size.width;
     _videoProgressView.frame = CGRectMake(CGRectGetMaxX(_videoTimeLabel.frame), progressViewY, progressViewW, bottomViewH);
+    _videoProgressView.tintColor = [UIColor grayColor];
     return _videoProgressView;
 }
 - (UISlider *)videoSlider
@@ -784,5 +867,81 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     return _rateTimeLabel;
 }
 
+- (UIView *)volumeView
+{
+    if (_volumeView) {
+        return _volumeView;
+    }
+    _volumeView = [[UIView alloc] init];
+    _volumeView.backgroundColor = self.topView.backgroundColor;
+    _volumeView.hidden = YES;
+
+    [_volumeView addSubview:self.volumeUpImageView];
+    [_volumeView addSubview:self.volumeSlider];
+    [_volumeView addSubview:self.volumeDownImageView];
+    
+    return _volumeView;
+}
+
+- (UISlider *)volumeSlider
+{
+    if (_volumeSlider) {
+        return _volumeSlider;
+    }
+    _volumeSlider = [[UISlider alloc] init];
+    _volumeSlider.transform =  CGAffineTransformMakeRotation( -M_PI * 0.5 );
+    [_volumeSlider setThumbImage:[UIImage imageNamed:@"progressThumb"] forState:UIControlStateNormal];
+    [_volumeSlider setThumbImage:[UIImage imageNamed:@"progressThumb"] forState:UIControlStateHighlighted];
+    
+    
+    _volumeSlider.frame = CGRectMake(0, volumeW, volumeW, volumeH - 2 * volumeW);
+    _volumeSlider.value = [self deviceVolume];
+    self.currentVolume = [self deviceVolume];
+    _volumeSlider.minimumTrackTintColor = [UIColor grayColor];
+    [_volumeSlider addTarget:self action:@selector(customVolumeChanged:) forControlEvents:UIControlEventValueChanged];
+    return _volumeSlider;
+}
+- (UIImageView *)volumeUpImageView
+{
+    if (_volumeUpImageView) {
+        return _volumeUpImageView;
+    }
+    _volumeUpImageView = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"yinliangda"]];
+    _volumeUpImageView.frame = CGRectMake(0, 0, volumeW, volumeW);
+    return _volumeUpImageView;
+}
+- (UIImageView *)volumeDownImageView
+{
+    if (_volumeDownImageView) {
+        return _volumeDownImageView;
+    }
+    _volumeDownImageView = [[UIImageView alloc] initWithImage:[UIImage imageNamed:@"yinliangxiao"]];
+    _volumeDownImageView.frame = CGRectMake(0, CGRectGetMaxY(self.volumeSlider.frame), volumeW, volumeW);
+    return _volumeDownImageView;
+}
+
+- (UISlider *)systemVolumeSlider
+{
+    if (_systemVolumeSlider) {
+        return _systemVolumeSlider;
+    }
+    for (UIView *view in [self.systemVolumeView subviews]){
+        if ([view.class.description isEqualToString:@"MPVolumeSlider"]){
+            _systemVolumeSlider = (UISlider*)view;
+            break;
+        }
+    }
+    return _systemVolumeSlider;
+}
+
+- (MPVolumeView *)systemVolumeView
+{
+    if (_systemVolumeView) {
+        return _systemVolumeView;
+    }
+    //隐藏掉
+    _systemVolumeView = [[MPVolumeView alloc] initWithFrame:CGRectMake(-1000, -1000, 100, 100)];
+    return _systemVolumeView;
+}
 
 @end
