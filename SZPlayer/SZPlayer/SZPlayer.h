@@ -39,9 +39,17 @@ extern NSString *const SZFullScreenBtnNotification;
 
 @property (assign, nonatomic) id<SZPlayerDelegate>delegate;
 
+//开始播放
 - (void)play;
 
+//暂停播放
 - (void)pause;
+
+//小屏显示
+- (void)toDetailView:(UIView *)view;
+
+//全屏显示
+- (void)toFullScreen;
 
 //页面销毁时需要调用彻底释放播放器
 - (void)releaseSZPlayer;

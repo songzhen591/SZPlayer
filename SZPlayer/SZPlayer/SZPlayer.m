@@ -78,8 +78,6 @@ static const CGFloat volumeW = 40;
 @property (assign, nonatomic) BOOL isTouchDownVideoSliderOrDraggingScreen;      //用户是否正在拖动底部滑块或滑动屏幕
 @property (assign, nonatomic) BOOL hideAroundingViews;                          //是否显示上下view
 
-@property (assign, nonatomic) BOOL isFullScreenPlay;                            //是否是全屏显示
-
 @property (strong, nonatomic) id playbackObj;
 
 
@@ -196,8 +194,6 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     _playerLayer.videoGravity = AVLayerVideoGravityResizeAspect;
     return _playerLayer;
 }
-
-
 
 #pragma mark - 监听self.playerItem
 - (void)addObserverToCurrentPlayerItem
@@ -376,43 +372,45 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
 {
     [self viewDismissAfterSeconds];
     
-    if (!_isFullScreenPlay) {
-        [UIView animateWithDuration:0.2 animations:^{
-            self.transform = CGAffineTransformIdentity;
-            self.transform = CGAffineTransformMakeRotation(M_PI / 2);
-            self.frame = CGRectMake(0, 0, SZScreenW, SZScreenH);
-            self.playerLayer.frame = CGRectMake(0,0, SZScreenH,SZScreenW);
-            [self setupSubViewFrames];
-            [[UIApplication sharedApplication].keyWindow addSubview:self];
-            self.isFullScreenPlay = YES;
-            self.fullScreenButton.selected = YES;
-        }];
-        
+    if (!self.fullScreenButton.selected) {
         //全屏模式下添加pan手势
         self.pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(pan:)];
         [self addGestureRecognizer:self.pan];
-        
         self.volumeView.hidden = NO;
-        
+        self.fullScreenButton.selected = YES;
     }else{
-        
         self.volumeView.hidden = YES;
-        //移除手势
-        [self removeGestureRecognizer:self.pan];
-        [UIView animateWithDuration:0.2 animations:^{
-            self.transform = CGAffineTransformIdentity;
-            self.frame = _frame;
-            self.playerLayer.frame =  self.bounds;
-            self.isFullScreenPlay = NO;
-            [self setupSubViewFrames];
-            self.fullScreenButton.selected = NO;
-        }];
-        
+        sender.selected = NO;
     }
     //发送全屏通知
     [[NSNotificationCenter defaultCenter] postNotificationName:SZFullScreenBtnNotification object:sender];
 }
 
+- (void)toFullScreen
+{
+    [self removeFromSuperview];
+    [UIView animateWithDuration:0.2 animations:^{
+        self.transform = CGAffineTransformIdentity;
+        self.transform = CGAffineTransformMakeRotation(M_PI / 2);
+        self.frame = CGRectMake(0, 0, SZScreenW, SZScreenH);
+        self.playerLayer.frame = CGRectMake(0,0, SZScreenH,SZScreenW);
+        [self setupSubViewFrames];
+        [[UIApplication sharedApplication].keyWindow addSubview:self];
+    }];
+}
+
+- (void)toDetailView:(UIView *)view
+{
+    [self removeFromSuperview];
+    [view addSubview:self];
+    [view bringSubviewToFront:self];
+    [UIView animateWithDuration:0.2 animations:^{
+        self.transform = CGAffineTransformIdentity;
+        self.frame = _frame;
+        self.playerLayer.frame = CGRectMake(0, 0, _frame.size.width, _frame.size.height);
+        [self setupSubViewFrames];
+    }];
+}
 
 - (void)pan:(UIPanGestureRecognizer *)pan
 {
@@ -454,7 +452,6 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
                 }else{
                     self.panDirection = PanGestureRecognizerDirectionLeft;
                 }
-                
                 [self horizontalDraggingOnScreen];
                 
             }else{
@@ -486,9 +483,7 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
                     break;
             }
             break;
-            
         }
-            
         default:
             break;
     }
@@ -542,7 +537,6 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     [self updateSystemVolume];
 }
 
-
 #pragma mark ***********************notification***********************
 - (void)videolayDidEnd:(NSNotification *)notification
 {
@@ -551,6 +545,7 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
         [weakSelf.videoSlider setValue:0.0 animated:YES];
         weakSelf.playOrPauseButton.selected = NO;
         weakSelf.isPlayed = NO;
+//    _currentTime = 0;
     }];
 }
 
@@ -639,19 +634,28 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
     [self.playerItem removeObserver:self forKeyPath:@"playbackBufferEmpty"];
     [self.playerItem removeObserver:self forKeyPath:@"playbackLikelyToKeepUp"];
 }
-
-#pragma mark - 释放
-- (void)releaseSZPlayer
+- (void)removeNotification
 {
     //移除通知
     [[NSNotificationCenter defaultCenter] removeObserver:self name:AVPlayerItemDidPlayToEndTimeNotification object:self.playerItem];
     [[NSNotificationCenter defaultCenter] removeObserver:self name:@"AVSystemController_SystemVolumeDidChangeNotification" object:nil];
+}
+
+#pragma mark - 释放
+- (void)releaseSZPlayer
+{
     [[UIApplication sharedApplication] endReceivingRemoteControlEvents];
     
     [self removeObserverFromCurrentPlayerItem];
     
     //移除此监听一定要提前，防止防止页面已经注销，但仍然对视频进行监控
-    [self.player removeTimeObserver:self.playbackObj];
+    @try {
+        [self.player removeTimeObserver:self.playbackObj];
+    } @catch (NSException *exception) {
+        NSLog(@"exception = %@", exception);
+    } @finally {
+        
+    }
     
     [self.player.currentItem cancelPendingSeeks];
     [self.player.currentItem.asset cancelLoading];
