@@ -47,14 +47,14 @@
 {
     UIButton *button = [notification object];
     if (button.selected) {
-        [[UIApplication sharedApplication] setStatusBarHidden:YES];
+//        [[UIApplication sharedApplication] setStatusBarHidden:YES];
         NSLog(@"全屏");
         
         [self.player toFullScreen];
         
         _alertView.center = CGPointMake(self.view.bounds.size.height * 0.5, self.view.bounds.size.width * 0.5);
     }else{
-        [[UIApplication sharedApplication] setStatusBarHidden:NO];
+//        [[UIApplication sharedApplication] setStatusBarHidden:NO];
         [self.player toDetailView:self.view];
         NSLog(@"半屏");
          _alertView.center = _player.center;
@@ -67,7 +67,12 @@
 - (void)tapVideoBack
 {
     NSLog(@"返回");
-    [self.navigationController popViewControllerAnimated:YES];
+    if (self.navigationController) {
+        [self.navigationController popViewControllerAnimated:YES];
+    }else{
+        [self dismissViewControllerAnimated:YES completion:nil];
+    }
+//    [self.navigationController popViewControllerAnimated:YES];
 }
 
 - (void)viewWillAppear:(BOOL)animated
@@ -76,6 +81,7 @@
 }
 -(void)viewWillDisappear:(BOOL)animated
 {
+    [self.player pause];
     self.navigationController.navigationBar.hidden = NO;
 }
 
@@ -86,6 +92,10 @@
 - (IBAction)pay:(UIButton *)sender {
 }
 - (IBAction)notPay:(UIButton *)sender {
+}
+- (BOOL)prefersStatusBarHidden
+{
+    return YES;
 }
 
 

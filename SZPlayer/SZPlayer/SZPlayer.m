@@ -23,8 +23,8 @@ typedef NS_ENUM(NSUInteger, PanGestureRecognizerDirection) {
     PanGestureRecognizerDirectionRight
 };
 
-static const CGFloat topViewH = 45;
-static const CGFloat bottomViewH = 45;
+static const CGFloat topViewH = 40;
+static const CGFloat bottomViewH = 40;
 static const CGFloat rateViewW = 120;
 static const CGFloat rateViewH = 80;
 static const CGFloat volumeH = 200;
@@ -67,7 +67,7 @@ static const CGFloat volumeW = 40;
 @property (strong, nonatomic) UILabel *videoDurationLabel;
 @property (strong, nonatomic) UISlider *videoSlider;
 @property (strong, nonatomic) UIProgressView *videoProgressView;
-@property (strong, nonatomic) UIButton *fullScreenButton;
+
 
 @property (assign, nonatomic) NSTimeInterval currentTime;                       //记录当前播放时间或者被拖动到的时间点
 @property (assign, nonatomic) NSTimeInterval videoDuration;                     //视频总时长
@@ -130,7 +130,6 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
         [self addGestureRecognizer:tap];
         
         [self viewDismissAfterSeconds];
-        
         
     }
     return self;
@@ -372,22 +371,19 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
 {
     [self viewDismissAfterSeconds];
     
-    if (!self.fullScreenButton.selected) {
-        //全屏模式下添加pan手势
-        self.pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(pan:)];
-        [self addGestureRecognizer:self.pan];
-        self.volumeView.hidden = NO;
-        self.fullScreenButton.selected = YES;
-    }else{
-        self.volumeView.hidden = YES;
-        sender.selected = NO;
-    }
+    self.fullScreenButton.selected = !self.fullScreenButton.isSelected;
+    
     //发送全屏通知
     [[NSNotificationCenter defaultCenter] postNotificationName:SZFullScreenBtnNotification object:sender];
 }
 
 - (void)toFullScreen
 {
+    //全屏模式下添加pan手势
+    self.pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(pan:)];
+    [self addGestureRecognizer:self.pan];
+    //显示音量条
+    self.volumeView.hidden = NO;
     [self removeFromSuperview];
     [UIView animateWithDuration:0.2 animations:^{
         self.transform = CGAffineTransformIdentity;
@@ -401,6 +397,11 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
 
 - (void)toDetailView:(UIView *)view
 {
+    //隐藏音量条
+    self.volumeView.hidden = YES;
+    //去掉手势
+    [self removeGestureRecognizer:self.pan];
+    
     [self removeFromSuperview];
     [view addSubview:self];
     [view bringSubviewToFront:self];
@@ -462,7 +463,6 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
                 }else{
                     self.panDirection = PanGestureRecognizerDirectionUp;
                 }
-                
                 [self verticalDraggingOnScreen];
             }
             break;
@@ -545,7 +545,6 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
         [weakSelf.videoSlider setValue:0.0 animated:YES];
         weakSelf.playOrPauseButton.selected = NO;
         weakSelf.isPlayed = NO;
-//    _currentTime = 0;
     }];
 }
 
@@ -562,6 +561,8 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
 {
     //以self.playerLayer为基准
     self.topView.frame = CGRectMake(0, 0, self.playerLayer.frame.size.width, topViewH);
+    self.backButton.frame = CGRectMake(20, 0, topViewH, topViewH);
+    self.titleLabel.frame = CGRectMake(CGRectGetMaxX(self.backButton.frame), 0, self.playerLayer.frame.size.width - CGRectGetMaxX(self.backButton.frame), topViewH);
     self.bottomView.frame = CGRectMake(0, self.playerLayer.frame.size.height - bottomViewH, self.playerLayer.frame.size.width, bottomViewH);
     self.fullScreenButton.frame = CGRectMake(self.playerLayer.frame.size.width - bottomViewH, 0, bottomViewH, bottomViewH);
     self.videoDurationLabel.frame = CGRectMake(self.playerLayer.frame.size.width - self.fullScreenButton.bounds.size.width - self.videoTimeLabel.bounds.size.width, 0, self.videoTimeLabel.bounds.size.width, bottomViewH);
@@ -710,10 +711,12 @@ NSString *const SZFullScreenBtnNotification = @"SZFullScreenButtonNotification";
         return _titleLabel;
     }
     _titleLabel = [[UILabel alloc] init];
-    _titleLabel.text = @"精彩的视频";
     _titleLabel.font = [UIFont systemFontOfSize:16.0f];
+    _titleLabel.textAlignment = NSTextAlignmentCenter;
     _titleLabel.textColor = [UIColor whiteColor];
-    _titleLabel.frame = CGRectMake(CGRectGetMaxX(_backButton.frame) + 30, 0, _frame.size.width - CGRectGetMaxX(_backButton.frame), topViewH);
+    NSLog(@"%f", CGRectGetMaxX(self.backButton.frame));
+    _titleLabel.frame = CGRectMake(CGRectGetMaxX(_backButton.frame) , 0, _frame.size.width - CGRectGetMaxX(_backButton.frame), topViewH);
+    NSLog(@"%@", NSStringFromCGRect(_titleLabel.frame));
     return _titleLabel;
 }
 

@@ -37,6 +37,8 @@ extern NSString *const SZFullScreenBtnNotification;
 //视频url
 @property (copy, nonatomic) NSString *videoURL;
 
+@property (strong, nonatomic) UIButton *fullScreenButton;
+
 @property (assign, nonatomic) id<SZPlayerDelegate>delegate;
 
 //开始播放
